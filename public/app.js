@@ -34,27 +34,42 @@ function state() {
   };
 }
 
+async function safeFetchJSON(url, init) {
+  try {
+    const resp = await fetch(url, init);
+    const ct = resp.headers.get('content-type') || '';
+    let data;
+    if (ct.includes('application/json')) {
+      data = await resp.json();
+    } else {
+      const text = await resp.text();
+      data = { ok: false, error: text || `HTTP ${resp.status}` };
+    }
+    if (!resp.ok && data.ok !== true) {
+      data.ok = false;
+      data.error = data.error || `HTTP ${resp.status}`;
+    }
+    return data;
+  } catch (e) {
+    return { ok: false, error: e.message || 'Network error' };
+  }
+}
+
 async function startGame() {
   history = [];
   chatEl.innerHTML = '';
   addMessage('assistant', '⏳ Starting your adventure...');
-  try {
-    const resp = await fetch('/api/start', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(state())
-    });
-    const data = await resp.json();
-    chatEl.lastChild.remove(); // remove loading
-    if (data.ok) {
-      addMessage('assistant', data.text);
-      history.push({ role: 'assistant', content: data.text });
-    } else {
-      addMessage('assistant', '⚠️ ' + (data.error || 'Failed to start.'));
-    }
-  } catch (e) {
-    chatEl.lastChild.remove();
-    addMessage('assistant', '⚠️ Network error: ' + e.message);
+  const data = await safeFetchJSON('/api/start', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(state())
+  });
+  chatEl.lastChild && chatEl.lastChild.remove(); // remove loading
+  if (data && data.text) {
+    addMessage('assistant', data.text);
+    history.push({ role: 'assistant', content: data.text });
+  } else {
+    addMessage('assistant', `⚠️ ${data?.error || 'Something went wrong. Starting offline mode.'}`);
   }
 }
 
@@ -63,21 +78,17 @@ async function sendMessage(text) {
   addMessage('user', text);
   history.push({ role: 'user', content: text });
 
-  try {
-    const resp = await fetch('/api/reply', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ ...state(), history, userMessage: text })
-    });
-    const data = await resp.json();
-    if (data.ok) {
-      addMessage('assistant', data.text);
-      history.push({ role: 'assistant', content: data.text });
-    } else {
-      addMessage('assistant', '⚠️ ' + (data.error || 'Failed to reply.'));
-    }
-  } catch (e) {
-    addMessage('assistant', '⚠️ Network error: ' + e.message);
+  const data = await safeFetchJSON('/api/reply', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ ...state(), history, userMessage: text })
+  });
+
+  if (data && data.text) {
+    addMessage('assistant', data.text);
+    history.push({ role: 'assistant', content: data.text });
+  } else {
+    addMessage('assistant', `⚠️ ${data?.error || 'No response received. Using offline puzzle.'}`);
   }
 }
 

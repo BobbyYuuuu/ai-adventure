@@ -12,20 +12,21 @@
 
     app.use(cors());
     app.use(express.json({ limit: '1mb' }));
+
+    // Simple preflight
+    app.use((req, res, next) => {
+      if (req.method === 'OPTIONS') return res.sendStatus(204);
+      next();
+    });
+
     app.use(express.static(path.join(__dirname, 'public')));
 
     const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
-
     const DEFAULT_MODEL = process.env.OPENAI_MODEL || 'gpt-4o-mini';
 
     function gameSystemPrompt({ language='English', difficulty='Easy' }) {
-      const langMap = {
-        English: 'English',
-        Chinese: '中文',
-        Japanese: '日本語'
-      };
+      const langMap = { English: 'English', Chinese: '中文', Japanese: '日本語' };
       const lang = langMap[language] || 'English';
-
       return `You are "Nova", the anime-style AI game master for a cozy text adventure called "AI Quest".
 Speak ONLY in ${lang}. Use short messages (max 3 sentences) unless a puzzle or riddle is given.
 Tone: friendly, playful, and encouraging.
@@ -48,7 +49,6 @@ Output format rules:
     }
 
     function sanitizeHistory(history = []) {
-      // Keep the last 12 turns max (system + 24 messages roughly)
       const max = 24;
       const trimmed = history.slice(-max);
       return trimmed.map(m => ({
@@ -57,58 +57,91 @@ Output format rules:
       }));
     }
 
+    function fallbackText({ language='English' } = {}, userMessage='') {
+      const map = {
+        English: {
+          intro: "Offline mode: The wind ripples across a pastel lake. Nova smiles, tapping a glowing rune.",
+          prompt: "Mini-puzzle: Count the vowels in your last message and send the number."
+        },
+        Chinese: {
+          intro: "离线模式：湖面微光荡漾。诺瓦微笑着点亮符文。",
+          prompt: "小谜题：数一数你上一条消息里有几个元音字母(aeiou)，发送数字。"
+        },
+        Japanese: {
+          intro: "オフラインモード：湖面に淡い光。ノヴァが符を軽く叩く。",
+          prompt: "ミニパズル：あなたの直前のメッセージにある母音(aeiou)の数を送って。"
+        }
+      };
+      const t = map[language] || map.English;
+      return `${t.intro}
+
+Mission: Whisper Count
+${t.prompt}`;
+    }
+
+    async function callOpenAI(messages) {
+      const completion = await openai.chat.completions.create({
+        model: DEFAULT_MODEL,
+        messages,
+        temperature: 0.8,
+        max_tokens: 500
+      });
+      return completion.choices?.[0]?.message?.content?.trim();
+    }
+
+    app.get('/api/health', (req, res) => {
+      res.json({ ok: true, model: DEFAULT_MODEL, hasKey: Boolean(process.env.OPENAI_API_KEY) });
+    });
+
     app.post('/api/start', async (req, res) => {
+      const { language='English', difficulty='Easy', playerName='Player' } = req.body || {};
+      const system = gameSystemPrompt({ language, difficulty });
+      const messages = [
+        { role: 'system', content: system },
+        { role: 'user', content: `Please start the game now. Greet ${playerName} by name and begin with an intro scene and MISSION 1.` }
+      ];
       try {
-        const { language='English', difficulty='Easy', playerName='Player' } = req.body || {};
-        const system = gameSystemPrompt({ language, difficulty });
-        const messages = [
-          { role: 'system', content: system },
-          { role: 'user', content: `Please start the game now. Greet ${playerName} by name and begin with an intro scene and MISSION 1.` }
-        ];
-
-        const completion = await openai.chat.completions.create({
-          model: DEFAULT_MODEL,
-          messages,
-          temperature: 0.8,
-          max_tokens: 500
-        });
-
-        const text = completion.choices?.[0]?.message?.content?.trim() || 'Sorry, I could not start the game.';
+        if (!process.env.OPENAI_API_KEY) throw new Error('Missing OPENAI_API_KEY');
+        const text = await callOpenAI(messages);
+        if (!text) throw new Error('Empty model response');
         res.json({ ok: true, text });
       } catch (err) {
-        console.error(err);
-        res.status(500).json({ ok: false, error: err?.message || 'Server error' });
+        console.error('start error:', err.message);
+        // Always return a valid JSON with a playable fallback
+        res.status(200).json({ ok: true, text: fallbackText({ language }) });
       }
     });
 
     app.post('/api/reply', async (req, res) => {
+      const { language='English', difficulty='Easy', history=[], userMessage='' } = req.body || {};
+      const system = gameSystemPrompt({ language, difficulty });
+      const messages = [{ role: 'system', content: system }, ...sanitizeHistory(history), { role: 'user', content: String(userMessage || '') }];
       try {
-        const { language='English', difficulty='Easy', history=[], userMessage='' } = req.body || {};
-        const system = gameSystemPrompt({ language, difficulty });
-        const messages = [{ role: 'system', content: system }, ...sanitizeHistory(history), { role: 'user', content: String(userMessage || '') }];
-
-        const completion = await openai.chat.completions.create({
-          model: DEFAULT_MODEL,
-          messages,
-          temperature: 0.8,
-          max_tokens: 500
-        });
-
-        const text = completion.choices?.[0]?.message?.content?.trim() || '...';
+        if (!process.env.OPENAI_API_KEY) throw new Error('Missing OPENAI_API_KEY');
+        const text = await callOpenAI(messages);
+        if (!text) throw new Error('Empty model response');
         res.json({ ok: true, text });
       } catch (err) {
-        console.error(err);
-        const status = err?.status || 500;
-        let msg = err?.message || 'Server error';
-        if (status == 401) msg = 'Invalid or missing OpenAI API key.';
-        if (status == 429) msg = 'Rate limit reached; try again in a moment.';
-        res.status(status).json({ ok: false, error: msg });
+        console.error('reply error:', err.message);
+        // Provide deterministic fallback to keep the game flowing
+        res.status(200).json({ ok: true, text: fallbackText({ language }, userMessage) });
       }
     });
 
-    // Serve the app
+    // JSON 404 for any unknown /api route
+    app.use('/api', (req, res) => {
+      res.status(404).json({ ok: false, error: 'API endpoint not found' });
+    });
+
+    // Serve SPA
     app.get('*', (req, res) => {
       res.sendFile(path.join(__dirname, 'public', 'index.html'));
+    });
+
+    // Final error handler -> JSON always
+    app.use((err, req, res, next) => {
+      console.error('Unhandled error:', err);
+      res.status(500).json({ ok: false, error: 'Internal server error' });
     });
 
     const PORT = process.env.PORT || 3000;
