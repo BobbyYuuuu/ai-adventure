@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>AI Quest · Anime Chat Adventure</title>
+  <link rel="icon" href="/assets/logo.png" />
+  <link rel="stylesheet" href="/styles.css" />
+</head>
+<body>
+  <div class="bg-wrap">
+    <img src="/assets/background.jpg" alt="bg" class="bg"/>
+  </div>
+  <header class="topbar">
+    <img src="/assets/logo.png" alt="AI Quest" class="logo"/>
+    <h1>AI Quest · Anime Chat Adventure</h1>
+  </header>
+
+  <main class="container">
+    <section class="controls">
+      <div>
+        <label>Language</label>
+        <select id="lang">
+          <option>English</option>
+          <option>Chinese</option>
+          <option>Japanese</option>
+        </select>
+      </div>
+      <div>
+        <label>Difficulty</label>
+        <select id="difficulty">
+          <option>Easy</option>
+          <option>Medium</option>
+          <option>Hard</option>
+        </select>
+      </div>
+      <div>
+        <label>Name</label>
+        <input id="playerName" placeholder="Player" />
+      </div>
+      <button id="startBtn">Start Game</button>
+    </section>
+
+    <section id="chat" class="chat">
+      <!-- messages injected here -->
+    </section>
+
+    <section class="composer">
+      <input id="msg" placeholder="Type your message… Try 'hint' if stuck." />
+      <button id="sendBtn">Send</button>
+      <button id="hintBtn" class="ghost">Hint</button>
+    </section>
+  </main>
+
+  <footer class="footer">
+    <small>Images are original placeholders generated for you. Replace them anytime in <code>/public/assets</code>.</small>
+  </footer>
+
+  <script src="/app.js"></script>
+</body>
+</html>
